@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HandControl · Navega con tus manos</title>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.js" crossorigin="anonymous"></script>
+<link href="https://fonts.googleapis.com/css2?family=Clash+Display:wght@400;600;700&family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f0ede6;
+  --ink: #1a1714;
+  --muted: #8a867e;
+  --accent: #e84c1e;
+  --accent2: #1e7ae8;
+  --surface: #e8e4dc;
+  --border: #d4cfc6;
+  --cam-size: 200px;
+}
+
+- { margin:0; padding:0; box-sizing:border-box; }
+
+html { scroll-behavior: smooth; font-size: 16px; }
+
+body {
+background: var(–bg);
+color: var(–ink);
+font-family: ‘JetBrains Mono’, monospace;
+cursor: none !important;
+}
+
+/* ─── CUSTOM CURSOR ─────────────────────────────────── */
+#cursor {
+position: fixed;
+width: 22px; height: 22px;
+border: 3px solid var(–accent);
+border-radius: 50%;
+pointer-events: none;
+z-index: 9999;
+left: -100px; top: -100px;
+transform: translate(-50%, -50%);
+transition: background 0.15s, width 0.15s, height 0.15s, border-color 0.15s;
+background: rgba(232,76,30,0.2);
+box-shadow: 0 0 12px rgba(232,76,30,0.6), 0 0 4px rgba(232,76,30,0.9);
+}
+
+#cursor.pinch {
+width: 12px; height: 12px;
+background: var(–accent);
+}
+
+#cursor.fist {
+width: 30px; height: 30px;
+background: rgba(232,76,30,0.15);
+border-color: var(–accent);
+}
+
+#cursor.scroll-mode {
+border-color: var(–accent2);
+background: rgba(30,122,232,0.1);
+width: 28px; height: 28px;
+}
+
+#cursor-trail {
+position: fixed;
+width: 8px; height: 8px;
+background: var(–accent);
+border-radius: 50%;
+pointer-events: none;
+z-index: 9998;
+left: -100px; top: -100px;
+transform: translate(-50%, -50%);
+opacity: 0.7;
+transition: left 0.1s, top 0.1s;
+box-shadow: 0 0 6px var(–accent);
+}
+
+/* ─── CAM WIDGET ────────────────────────────────────── */
+#camWidget {
+position: fixed;
+bottom: 24px;
+right: 24px;
+z-index: 1000;
+display: flex;
+flex-direction: column;
+align-items: flex-end;
+gap: 10px;
+}
+
+#camBox {
+width: var(–cam-size);
+height: calc(var(–cam-size) * 0.75);
+border-radius: 12px;
+overflow: hidden;
+border: 2px solid var(–border);
+background: var(–ink);
+position: relative;
+box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+}
+
+#videoEl { display: none; }
+
+#camCanvas {
+width: 100%; height: 100%;
+transform: scaleX(-1);
+display: block;
+}
+
+#gestureChip {
+position: absolute;
+bottom: 6px;
+left: 50%;
+transform: translateX(-50%);
+background: rgba(26,23,20,0.85);
+color: #fff;
+font-size: 0.6rem;
+letter-spacing: 0.1em;
+padding: 3px 10px;
+border-radius: 20px;
+white-space: nowrap;
+opacity: 0;
+transition: opacity 0.2s;
+}
+
+#gestureChip.show { opacity: 1; }
+
+/* Resize handle */
+#camResize {
+position: absolute;
+top: 6px; right: 6px;
+background: rgba(255,255,255,0.15);
+border: none;
+color: white;
+font-size: 0.6rem;
+padding: 3px 7px;
+border-radius: 6px;
+cursor: pointer;
+font-family: ‘JetBrains Mono’, monospace;
+}
+
+/* HUD strip */
+#hud {
+display: flex;
+gap: 6px;
+align-items: center;
+}
+
+.hud-pill {
+background: var(–ink);
+color: var(–bg);
+font-size: 0.6rem;
+letter-spacing: 0.08em;
+padding: 5px 10px;
+border-radius: 20px;
+display: flex;
+align-items: center;
+gap: 5px;
+}
+
+.hud-dot {
+width: 5px; height: 5px;
+border-radius: 50%;
+background: #666;
+}
+
+.hud-dot.on { background: #4cff8a; box-shadow: 0 0 6px #4cff8a; }
+.hud-dot.warn { background: var(–accent); box-shadow: 0 0 6px var(–accent); }
+
+/* ─── GESTURE LEGEND ────────────────────────────────── */
+#legend {
+position: fixed;
+top: 24px; right: 24px;
+z-index: 1000;
+background: var(–ink);
+color: var(–bg);
+border-radius: 14px;
+padding: 16px 18px;
+width: 200px;
+box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+}
+
+#legend h3 {
+font-size: 0.6rem;
+letter-spacing: 0.15em;
+color: var(–muted);
+margin-bottom: 12px;
+text-transform: uppercase;
+}
+
+.legend-row {
+display: flex;
+align-items: center;
+gap: 10px;
+padding: 5px 0;
+border-bottom: 1px solid #2a2724;
+font-size: 0.68rem;
+}
+
+.legend-row:last-child { border: none; }
+
+.legend-icon { font-size: 1.1rem; width: 24px; text-align: center; }
+.legend-text { color: #c8c4bc; }
+.legend-active { color: #4cff8a !important; font-weight: 500; }
+
+/* ─── PAGE CONTENT ──────────────────────────────────── */
+#pageContent {
+max-width: 760px;
+margin: 0 auto;
+padding: 80px 40px 200px;
+transform-origin: top center;
+transition: transform 0.1s;
+}
+
+.page-header {
+margin-bottom: 60px;
+}
+
+.tag-line {
+font-size: 0.7rem;
+letter-spacing: 0.2em;
+color: var(–accent);
+text-transform: uppercase;
+margin-bottom: 16px;
+}
+
+.page-title {
+font-family: ‘Clash Display’, sans-serif;
+font-size: clamp(2.8rem, 6vw, 5rem);
+font-weight: 700;
+line-height: 1.0;
+letter-spacing: -0.03em;
+color: var(–ink);
+}
+
+.page-title span { color: var(–accent); }
+
+.page-sub {
+margin-top: 20px;
+font-size: 0.82rem;
+line-height: 1.8;
+color: var(–muted);
+max-width: 500px;
+}
+
+/* Cards */
+.card-grid {
+display: grid;
+grid-template-columns: 1fr 1fr;
+gap: 16px;
+margin: 40px 0;
+}
+
+.card {
+background: var(–surface);
+border: 1px solid var(–border);
+border-radius: 16px;
+padding: 24px;
+transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+cursor: none;
+}
+
+.card:hover, .card.hovered {
+transform: translateY(-3px);
+box-shadow: 0 12px 32px rgba(0,0,0,0.08);
+border-color: var(–accent);
+}
+
+.card-icon { font-size: 2rem; margin-bottom: 12px; }
+
+.card-title {
+font-family: ‘Clash Display’, sans-serif;
+font-size: 1.1rem;
+font-weight: 600;
+margin-bottom: 8px;
+}
+
+.card-body {
+font-size: 0.75rem;
+line-height: 1.7;
+color: var(–muted);
+}
+
+/* Sections */
+.section {
+margin: 60px 0;
+padding-top: 20px;
+border-top: 1px solid var(–border);
+}
+
+.section-label {
+font-size: 0.65rem;
+letter-spacing: 0.18em;
+color: var(–muted);
+text-transform: uppercase;
+margin-bottom: 20px;
+}
+
+.section-title {
+font-family: ‘Clash Display’, sans-serif;
+font-size: 2rem;
+font-weight: 600;
+margin-bottom: 16px;
+letter-spacing: -0.02em;
+}
+
+p {
+font-size: 0.82rem;
+line-height: 1.9;
+color: #4a4540;
+margin-bottom: 16px;
+}
+
+/* Big buttons */
+.btn-row { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 24px; }
+
+.btn {
+padding: 12px 24px;
+border-radius: 50px;
+border: 1.5px solid var(–ink);
+background: transparent;
+color: var(–ink);
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 0.75rem;
+cursor: none;
+transition: all 0.2s;
+letter-spacing: 0.05em;
+}
+
+.btn.filled {
+background: var(–ink);
+color: var(–bg);
+}
+
+.btn:hover, .btn.hovered {
+background: var(–accent);
+border-color: var(–accent);
+color: #fff;
+transform: scale(1.04);
+}
+
+/* Image placeholders */
+.img-placeholder {
+width: 100%;
+height: 200px;
+background: var(–surface);
+border-radius: 16px;
+border: 1px solid var(–border);
+display: flex;
+align-items: center;
+justify-content: center;
+font-size: 0.7rem;
+color: var(–muted);
+letter-spacing: 0.1em;
+margin: 20px 0;
+}
+
+/* Clickable elements highlight when finger points */
+.interactive { transition: outline 0.1s; }
+.interactive.pointer-hover { outline: 2px solid var(–accent2); outline-offset: 3px; }
+
+/* Scroll indicator */
+#scrollBar {
+position: fixed;
+left: 20px;
+top: 50%;
+transform: translateY(-50%);
+width: 3px;
+height: 120px;
+background: var(–border);
+border-radius: 3px;
+z-index: 1000;
+}
+
+#scrollFill {
+width: 100%;
+background: var(–accent);
+border-radius: 3px;
+transition: height 0.1s;
+height: 0%;
+}
+
+/* Zoom indicator */
+#zoomBar {
+position: fixed;
+left: 32px;
+top: 50%;
+transform: translateY(-50%);
+width: 3px;
+height: 120px;
+background: var(–border);
+border-radius: 3px;
+z-index: 1000;
+}
+
+#zoomFill {
+width: 100%;
+background: var(–accent2);
+border-radius: 3px;
+transition: height 0.1s;
+height: 25%;
+position: absolute;
+bottom: 0;
+}
+
+/* Start overlay */
+#startOverlay {
+position: fixed;
+inset: 0;
+background: var(–ink);
+z-index: 2000;
+display: flex;
+align-items: center;
+justify-content: center;
+flex-direction: column;
+gap: 20px;
+}
+
+.start-logo {
+font-family: ‘Clash Display’, sans-serif;
+font-size: clamp(3rem, 8vw, 7rem);
+font-weight: 700;
+color: var(–bg);
+letter-spacing: -0.05em;
+}
+
+.start-logo em {
+font-style: normal;
+color: var(–accent);
+}
+
+.start-desc {
+font-size: 0.8rem;
+color: #666;
+letter-spacing: 0.08em;
+text-align: center;
+line-height: 1.8;
+max-width: 380px;
+}
+
+.start-gestures {
+display: flex;
+gap: 16px;
+margin: 10px 0;
+flex-wrap: wrap;
+justify-content: center;
+}
+
+.sg {
+background: #252220;
+border-radius: 10px;
+padding: 10px 14px;
+text-align: center;
+font-size: 0.65rem;
+color: #888;
+}
+
+.sg span { display: block; font-size: 1.5rem; margin-bottom: 4px; }
+
+.start-btn {
+padding: 14px 36px;
+background: var(–accent);
+color: white;
+border: none;
+border-radius: 50px;
+font-family: ‘JetBrains Mono’, monospace;
+font-size: 0.85rem;
+letter-spacing: 0.05em;
+cursor: pointer;
+font-weight: 500;
+transition: opacity 0.2s;
+}
+
+.start-btn:hover { opacity: 0.85; }
+</style>
+
+</head>
+<body>
+
+<!-- Start overlay -->
+
+<div id="startOverlay">
+  <div class="start-logo">HAND<em>CTRL</em></div>
+  <div class="start-desc">Controla esta página web con tus manos.<br>Sin mouse. Sin teclado.</div>
+  <div class="start-gestures">
+    <div class="sg"><span>☝️</span>Mover cursor</div>
+    <div class="sg"><span>✌️</span>Scroll (zona Y)</div>
+    <div class="sg"><span>🤏</span>Pinch = Click</div>
+    <div class="sg"><span>🤟</span>Zoom in/out</div>
+    <div class="sg"><span>🖐️</span>Reset zoom</div>
+  </div>
+  <button class="start-btn" onclick="startHandControl()">Activar control por manos</button>
+</div>
+
+<!-- Custom cursor -->
+
+<div id="cursor"></div>
+<div id="cursor-trail"></div>
+
+<!-- Gesture Legend -->
+
+<div id="legend">
+  <h3>Gestos Activos</h3>
+  <div class="legend-row" id="lg-cursor">
+    <div class="legend-icon">☝️</div>
+    <div class="legend-text">Mover cursor</div>
+  </div>
+  <div class="legend-row" id="lg-scroll">
+    <div class="legend-icon">✌️</div>
+    <div class="legend-text">Scroll (zona Y del dedo)</div>
+  </div>
+  <div class="legend-row" id="lg-click">
+    <div class="legend-icon">🤏</div>
+    <div class="legend-text">Click (pinch)</div>
+  </div>
+  <div class="legend-row" id="lg-zoom">
+    <div class="legend-icon">🤟</div>
+    <div class="legend-text">Zoom (altura mano)</div>
+  </div>
+  <div class="legend-row" id="lg-reset">
+    <div class="legend-icon">🖐️</div>
+    <div class="legend-text">Reset zoom</div>
+  </div>
+</div>
+
+<!-- Scroll & Zoom bars -->
+
+<div id="scrollBar"><div id="scrollFill"></div></div>
+<div id="zoomBar"><div id="zoomFill"></div></div>
+
+<!-- Camera widget -->
+
+<div id="camWidget">
+  <div id="hud">
+    <div class="hud-pill"><div class="hud-dot" id="camDot"></div><span id="camTxt">cámara</span></div>
+    <div class="hud-pill"><div class="hud-dot" id="handDot"></div><span id="handTxt">mano</span></div>
+    <div class="hud-pill" id="gestureTxt">—</div>
+  </div>
+  <div id="camBox">
+    <video id="videoEl" autoplay playsinline muted></video>
+    <canvas id="camCanvas"></canvas>
+    <div id="gestureChip"></div>
+    <button id="camResize" onclick="toggleCamSize()">⤢</button>
+  </div>
+</div>
+
+<!-- ─── PAGE CONTENT ─────────────────────────────────────── -->
+
+<div id="pageContent">
+  <div class="page-header">
+    <div class="tag-line">Control gestual · Demo</div>
+    <h1 class="page-title">Navega con<br>tus <span>manos.</span></h1>
+    <p class="page-sub">Esta página responde a los gestos de tu mano capturados por la cámara en tiempo real. Mueve el cursor, haz scroll, haz click — todo sin tocar nada.</p>
+    <div class="btn-row">
+      <button class="btn filled interactive" onclick="alert('¡Click con la mano!')">Prueba click ✊🤏</button>
+      <button class="btn interactive" onclick="alert('¡Funciona!')">Otro botón</button>
+    </div>
+  </div>
+
+  <div class="card-grid">
+    <div class="card interactive">
+      <div class="card-icon">🎯</div>
+      <div class="card-title">Cursor preciso</div>
+      <div class="card-body">La punta del dedo índice controla el cursor en tiempo real con MediaPipe Hands.</div>
+    </div>
+    <div class="card interactive">
+      <div class="card-icon">📜</div>
+      <div class="card-title">Scroll zonal</div>
+      <div class="card-body">Índice + medio ✌️ activa el scroll. Sube el dedo hacia arriba de la pantalla para subir, hacia abajo para bajar.</div>
+    </div>
+    <div class="card interactive">
+      <div class="card-icon">🤏</div>
+      <div class="card-title">Pinch = Click</div>
+      <div class="card-body">Acerca el pulgar y el índice para simular un click sobre cualquier elemento.</div>
+    </div>
+    <div class="card interactive">
+      <div class="card-icon">🤟</div>
+      <div class="card-title">Zoom gestual</div>
+      <div class="card-body">Signo de rock 🤟 (índice + meñique). Sube o baja la mano para hacer zoom en el contenido.</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Tecnología</div>
+    <h2 class="section-title">Cómo funciona</h2>
+    <p>La cámara captura video en tiempo real y MediaPipe Hands detecta 21 puntos de referencia en tu mano. A partir de esos puntos, un sistema de reglas clasifica el gesto actual y lo traduce en acciones sobre la página.</p>
+    <p>El cursor sigue la punta del índice (landmark 8). El scroll se activa con el puño (todos los dedos cerrados) y responde a la velocidad vertical del movimiento. El pinch detecta la distancia entre el pulgar (4) y el índice (8).</p>
+    <div class="img-placeholder">[ DIAGRAMA DE LANDMARKS — 21 PUNTOS DE MANO ]</div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Más contenido</div>
+    <h2 class="section-title">Scroll hasta aquí</h2>
+    <p>Si llegaste aquí haciendo scroll con el puño — ¡funciona! Este es el final de la demo. Puedes seguir explorando los gestos o modificar el código para adaptarlo a tu proyecto.</p>
+    <p>El código usa únicamente MediaPipe Hands (CDN) y vanilla JS. Sin frameworks, sin librerías extra. Funciona en Chrome y Edge con cámara disponible.</p>
+    <div class="btn-row">
+      <button class="btn interactive" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑ Volver arriba</button>
+      <button class="btn filled interactive" onclick="alert('Podrías añadir cualquier acción aquí')">Acción personalizada</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden video -->
+
+<video id="videoEl" style="display:none" autoplay playsinline muted></video>
+
+<script>
+// ─── REFS ──────────────────────────────────────────────
+const cursor = document.getElementById('cursor');
+const cursorTrail = document.getElementById('cursor-trail');
+const camCanvas = document.getElementById('camCanvas');
+const camCtx = camCanvas.getContext('2d');
+const videoEl = document.getElementById('videoEl');
+const gestureChip = document.getElementById('gestureChip');
+const gestureTxt = document.getElementById('gestureTxt');
+const pageContent = document.getElementById('pageContent');
+
+// ─── STATE ─────────────────────────────────────────────
+let cursorX = -200;
+let cursorY = -200;
+let smoothX = -200, smoothY = -200;
+let trailX = -200, trailY = -200;
+let cursorVisible = false;
+let pageZoom = 1.0;
+let scrolling = false;
+let lastHandY = null;
+let lastGesture = 'none';
+let isPinching = false;
+let pinchCooldown = false;
+let camBig = false;
+let activeElement = null;
+
+// ─── SMOOTHING ──────────────────────────────────────────
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+function animateCursor() {
+  smoothX = lerp(smoothX, cursorX, 0.25);
+  smoothY = lerp(smoothY, cursorY, 0.25);
+  trailX = lerp(trailX, smoothX, 0.12);
+  trailY = lerp(trailY, smoothY, 0.12);
+
+  cursor.style.left = smoothX + 'px';
+  cursor.style.top = smoothY + 'px';
+  cursorTrail.style.left = trailX + 'px';
+  cursorTrail.style.top = trailY + 'px';
+
+  // Update scroll fill
+  const maxScroll = document.body.scrollHeight - window.innerHeight;
+  const pct = maxScroll > 0 ? (window.scrollY / maxScroll) * 100 : 0;
+  document.getElementById('scrollFill').style.height = pct + '%';
+
+  // Check hover on interactive elements
+  checkHover(smoothX, smoothY);
+
+  requestAnimationFrame(animateCursor);
+}
+
+// ─── HOVER DETECTION ───────────────────────────────────
+function checkHover(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (activeElement && activeElement !== el) {
+    activeElement.classList.remove('hovered', 'pointer-hover');
+  }
+  if (el) {
+    const interactive = el.closest('.interactive, button, a, [onclick]');
+    if (interactive) {
+      interactive.classList.add('hovered');
+      cursor.classList.add('pinch'); // show "ready to click" cursor
+      activeElement = interactive;
+    } else {
+      cursor.classList.remove('pinch');
+      activeElement = null;
+    }
+  }
+}
+
+// ─── MEDIAPIPE ──────────────────────────────────────────
+let hands;
+
+async function startHandControl() {
+  document.getElementById('startOverlay').style.display = 'none';
+  animateCursor();
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } });
+    videoEl.srcObject = stream;
+    await new Promise(r => videoEl.onloadedmetadata = r);
+    videoEl.play();
+
+    document.getElementById('camDot').classList.add('on');
+    document.getElementById('camTxt').textContent = 'activa';
+
+    hands = new Hands({
+      locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${f}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.72,
+      minTrackingConfidence: 0.55
+    });
+
+    hands.onResults(onResults);
+    processLoop();
+
+  } catch(e) {
+    alert('Error al acceder a la cámara: ' + e.message);
+  }
+}
+
+async function processLoop() {
+  if (videoEl.readyState >= 2) {
+    camCanvas.width = videoEl.videoWidth;
+    camCanvas.height = videoEl.videoHeight;
+    await hands.send({ image: videoEl });
+  }
+  requestAnimationFrame(processLoop);
+}
+
+// ─── RESULTS ───────────────────────────────────────────
+function onResults(results) {
+  // Draw cam feed
+  camCtx.clearRect(0, 0, camCanvas.width, camCanvas.height);
+  camCtx.drawImage(videoEl, 0, 0, camCanvas.width, camCanvas.height);
+
+  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    document.getElementById('handDot').classList.remove('on');
+    document.getElementById('handTxt').textContent = 'sin mano';
+    gestureTxt.textContent = '—';
+    scrolling = false;
+    lastHandY = null;
+    lastGesture = 'none';
+    updateLegend('none');
+    return;
+  }
+
+  document.getElementById('handDot').classList.add('on');
+  document.getElementById('handTxt').textContent = 'detectada';
+
+  const lms = results.multiHandLandmarks[0];
+
+  // Draw simple landmarks on cam
+  drawLandmarksOnCam(lms);
+
+  // Detect gesture
+  const gesture = detectGesture(lms);
+  applyGesture(gesture, lms);
+  updateLegend(gesture);
+
+  // Show gesture chip
+  const names = { cursor:'☝️ Cursor', scroll:'✌️ Scroll', pinch:'🤏 Click!', zoom:'🤟 Zoom', reset:'🖐️ Reset zoom', none:'—' };
+  gestureChip.textContent = names[gesture] || gesture;
+  gestureChip.classList.add('show');
+  gestureTxt.textContent = names[gesture] || '—';
+}
+
+// ─── DRAW LANDMARKS ON SMALL CAM ───────────────────────
+function drawLandmarksOnCam(lms) {
+  const W = camCanvas.width, H = camCanvas.height;
+  // Mirror for display
+  camCtx.save();
+  camCtx.scale(-1, 1);
+  camCtx.translate(-W, 0);
+
+  // Connections (simplified)
+  const conns = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+  camCtx.strokeStyle = 'rgba(255,255,255,0.35)';
+  camCtx.lineWidth = 1.5;
+  for (const [a,b] of conns) {
+    camCtx.beginPath();
+    camCtx.moveTo(lms[a].x * W, lms[a].y * H);
+    camCtx.lineTo(lms[b].x * W, lms[b].y * H);
+    camCtx.stroke();
+  }
+
+  // Key landmarks
+  const keyPts = [4, 8, 12, 16, 20, 0];
+  for (const i of keyPts) {
+    camCtx.beginPath();
+    camCtx.arc(lms[i].x * W, lms[i].y * H, 4, 0, Math.PI * 2);
+    camCtx.fillStyle = i === 8 ? '#e84c1e' : 'rgba(255,255,255,0.7)';
+    camCtx.fill();
+  }
+
+  camCtx.restore();
+}
+
+// ─── GESTURE DETECTION ─────────────────────────────────
+function isUp(lms, tip, pip) { return lms[tip].y < lms[pip].y - 0.02; }
+
+function detectGesture(lms) {
+  const idx = isUp(lms, 8, 6);
+  const mid = isUp(lms, 12, 10);
+  const rng = isUp(lms, 16, 14);
+  const pnk = isUp(lms, 20, 18);
+
+  // Pinch: thumb tip near index tip
+  const dx = lms[4].x - lms[8].x;
+  const dy = lms[4].y - lms[8].y;
+  const pinchDist = Math.sqrt(dx*dx + dy*dy);
+
+  if (pinchDist < 0.06) return 'pinch';
+
+  // 🤟 rock sign: index + pinky up, middle + ring down → zoom
+  if (idx && !mid && !rng && pnk) return 'zoom';
+
+  // ✌️ index + middle up, ring + pinky down → scroll
+  if (idx && mid && !rng && !pnk) return 'scroll';
+
+  // ☝️ only index up → cursor
+  if (idx && !mid && !rng && !pnk) return 'cursor';
+
+  // 🖐️ all fingers up → reset zoom
+  if (idx && mid && rng && pnk) return 'reset';
+
+  return 'none';
+}
+
+// ─── SCROLL ZONE ───────────────────────────────────────
+// Divide screen into 3 vertical zones based on index Y position
+// top 30% → scroll up fast, 30-70% → slow/dead zone, bottom 30% → scroll down fast
+let scrollVelocity = 0;
+
+function getScrollSpeed(indexY_normalized) {
+  // indexY_normalized: 0 = top of screen, 1 = bottom
+  if (indexY_normalized < 0.25) {
+    // Top zone: scroll up, faster the higher
+    return -((0.25 - indexY_normalized) / 0.25) * 18;
+  } else if (indexY_normalized > 0.75) {
+    // Bottom zone: scroll down
+    return ((indexY_normalized - 0.75) / 0.25) * 18;
+  }
+  return 0; // dead zone
+}
+
+// ─── APPLY GESTURE ─────────────────────────────────────
+function applyGesture(gesture, lms) {
+  const W = window.innerWidth;
+  const H = window.innerHeight;
+
+  // Index fingertip position (mirrored because camera is flipped)
+  const rawX = (1 - lms[8].x) * W;
+  const rawY = lms[8].y * H;
+
+  // ☝️ CURSOR — solo índice
+  if (gesture === 'cursor') {
+    cursorX = rawX;
+    cursorY = rawY;
+    if (!cursorVisible) { smoothX = rawX; smoothY = rawY; trailX = rawX; trailY = rawY; cursorVisible = true; }
+    cursor.className = '';
+    lastHandY = null;
+  }
+
+  // 🤏 PINCH — click
+  if (gesture === 'pinch') {
+    cursorX = rawX;
+    cursorY = rawY;
+    if (!cursorVisible) { smoothX = rawX; smoothY = rawY; trailX = rawX; trailY = rawY; cursorVisible = true; }
+    cursor.className = 'pinch';
+    if (!isPinching && !pinchCooldown) {
+      isPinching = true;
+      triggerClick(rawX, rawY);
+      pinchCooldown = true;
+      setTimeout(() => { pinchCooldown = false; isPinching = false; }, 600);
+    }
+  } else {
+    if (!pinchCooldown) isPinching = false;
+  }
+
+  // ✌️ SCROLL — índice + medio, zona Y del índice controla dirección
+  if (gesture === 'scroll') {
+    cursor.className = 'scroll-mode';
+    const indexYNorm = lms[8].y; // 0=top 1=bottom in camera space
+    scrollVelocity = getScrollSpeed(indexYNorm);
+    window.scrollBy({ top: scrollVelocity, behavior: 'auto' });
+
+    // Show cursor at index position
+    cursorX = rawX;
+    cursorY = rawY;
+    if (!cursorVisible) { smoothX = rawX; smoothY = rawY; trailX = rawX; trailY = rawY; cursorVisible = true; }
+
+    // Draw scroll zone indicator via cursor size
+    const speed = Math.abs(scrollVelocity);
+    cursor.style.width = (22 + speed * 1.5) + 'px';
+    cursor.style.height = (22 + speed * 1.5) + 'px';
+  } else {
+    cursor.style.width = '';
+    cursor.style.height = '';
+    scrollVelocity = 0;
+  }
+
+  // 🤟 ZOOM — rock sign, wrist height
+  if (gesture === 'zoom') {
+    cursor.className = 'scroll-mode';
+    const wristY = lms[0].y;
+    const targetZoom = 0.6 + (1 - wristY) * 1.4;
+    pageZoom = Math.max(0.6, Math.min(2.0, targetZoom));
+    pageContent.style.transform = `scale(${pageZoom})`;
+    const zoomPct = ((pageZoom - 0.6) / 1.4) * 100;
+    document.getElementById('zoomFill').style.height = zoomPct + '%';
+    cursorX = rawX;
+    cursorY = rawY;
+  }
+
+  // 🖐️ RESET — mano abierta
+  if (gesture === 'reset') {
+    pageZoom = 1.0;
+    pageContent.style.transform = 'scale(1)';
+    document.getElementById('zoomFill').style.height = '25%';
+    cursor.className = '';
+  }
+
+  lastGesture = gesture;
+}
+
+// ─── TRIGGER CLICK ─────────────────────────────────────
+function triggerClick(x, y) {
+  const el = document.elementFromPoint(x, y);
+  if (!el) return;
+
+  // Visual feedback
+  const flash = document.createElement('div');
+  flash.style.cssText = `position:fixed;left:${x-20}px;top:${y-20}px;width:40px;height:40px;border-radius:50%;background:rgba(232,76,30,0.4);pointer-events:none;z-index:9997;animation:clickFlash 0.3s ease-out forwards;`;
+  document.body.appendChild(flash);
+  setTimeout(() => flash.remove(), 350);
+
+  // Click
+  el.click();
+  if (el.focus) el.focus();
+}
+
+// ─── LEGEND UPDATE ─────────────────────────────────────
+function updateLegend(gesture) {
+  const map = { cursor:'lg-cursor', scroll:'lg-scroll', pinch:'lg-click', zoom:'lg-zoom', reset:'lg-reset' };
+  document.querySelectorAll('.legend-row').forEach(r => {
+    r.querySelector('.legend-text')?.classList.remove('legend-active');
+  });
+  if (map[gesture]) {
+    document.getElementById(map[gesture])?.querySelector('.legend-text')?.classList.add('legend-active');
+  }
+}
+
+// ─── CAM SIZE TOGGLE ───────────────────────────────────
+function toggleCamSize() {
+  camBig = !camBig;
+  const box = document.getElementById('camBox');
+  box.style.width = camBig ? '320px' : '200px';
+  box.style.height = camBig ? '240px' : '150px';
+}
+
+// ─── CLICK FLASH ANIMATION ─────────────────────────────
+const style = document.createElement('style');
+style.textContent = `@keyframes clickFlash { 0%{opacity:1;transform:scale(0.5)} 100%{opacity:0;transform:scale(2)} }`;
+document.head.appendChild(style);
+</script>
+
+</body>
+</html>
